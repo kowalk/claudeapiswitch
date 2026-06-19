@@ -22,7 +22,7 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - run: ./gradlew test
+      - run: ./gradlew test --warn
 
   release:
     needs: test
@@ -52,6 +52,21 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "zip=build/distributions/claude-api-switch-${CURRENT}.zip" >> "$GITHUB_OUTPUT"
 
+          # Bump pluginVersion in gradle.properties
+          sed -i "s/^pluginVersion = .*/pluginVersion = $CURRENT/" gradle.properties
+
+      - name: Commit version bump
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add gradle.properties
+          if git diff --staged --quiet; then
+            echo "Version already up to date"
+          else
+            git commit -m "chore: bump version to ${{ steps.version.outputs.version }} [skip ci]"
+            git push origin HEAD:main
+          fi
+
       - uses: actions/setup-java@v4
         with:
           java-version: '21'
@@ -60,7 +75,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       - name: Build Plugin
-        run: ./gradlew buildPlugin "-PpluginVersion=${{ steps.version.outputs.version }}"
+        run: ./gradlew buildPlugin "-PpluginVersion=${{ steps.version.outputs.version }}" --warn
 
       - name: Create tag and release
         run: |
