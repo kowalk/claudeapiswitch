@@ -33,7 +33,18 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Check if this is a version-bump retrigger
+        id: guard
+        run: |
+          if git log -1 --pretty=%B | grep -q "^chore: bump version"; then
+            echo "Bot version bump — skipping release"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Compute next version and tag
+        if: steps.guard.outputs.skip != 'true'
         id: version
         run: |
           CURRENT=$(grep '^pluginVersion' gradle.properties | cut -d'=' -f2 | tr -d ' ')
@@ -56,6 +67,7 @@ jobs:
           sed -i "s/^pluginVersion = .*/pluginVersion = $CURRENT/" gradle.properties
 
       - name: Commit version bump
+        if: steps.guard.outputs.skip != 'true'
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -63,7 +75,7 @@ jobs:
           if git diff --staged --quiet; then
             echo "Version already up to date"
           else
-            git commit -m "chore: bump version to ${{ steps.version.outputs.version }} [skip ci]"
+            git commit -m "chore: bump version to ${{ steps.version.outputs.version }}"
             git push origin HEAD:main
           fi
 
@@ -75,9 +87,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       - name: Build Plugin
+        if: steps.guard.outputs.skip != 'true'
         run: ./gradlew buildPlugin "-PpluginVersion=${{ steps.version.outputs.version }}" --warn
 
       - name: Create tag and release
+        if: steps.guard.outputs.skip != 'true'
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -85,6 +99,7 @@ jobs:
           git push origin "${{ steps.version.outputs.tag }}"
 
       - uses: softprops/action-gh-release@v2
+        if: steps.guard.outputs.skip != 'true'
         with:
           tag_name: "${{ steps.version.outputs.tag }}"
           name: "${{ steps.version.outputs.tag }}"
