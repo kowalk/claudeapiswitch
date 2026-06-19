@@ -22,7 +22,7 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - run: ./gradlew test --warn
+      - run: ./gradlew test
 
   release:
     needs: test
@@ -31,26 +31,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Check if this is a version-bump retrigger
-        id: guard
-        run: |
-          if git log -1 --pretty=%B | grep -q "^chore: bump version"; then
-            echo "Bot version bump — skipping release"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Compute next version and tag
-        if: steps.guard.outputs.skip != 'true'
         id: version
         run: |
-          CURRENT=$(grep '^pluginVersion' gradle.properties | cut -d'=' -f2 | tr -d ' ')
-          echo "Base version: $CURRENT"
+          BASE=$(grep '^pluginVersion' gradle.properties | cut -d'=' -f2 | tr -d ' ')
 
-          # Find next available patch version
+          CURRENT="$BASE"
           while git rev-parse "v${CURRENT}" >/dev/null 2>&1; do
             MAJOR=$(echo "$CURRENT" | cut -d'.' -f1)
             MINOR=$(echo "$CURRENT" | cut -d'.' -f2)
@@ -61,23 +48,6 @@ jobs:
           TAG="v${CURRENT}"
           echo "version=$CURRENT" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "zip=build/distributions/claude-api-switch-${CURRENT}.zip" >> "$GITHUB_OUTPUT"
-
-          # Bump pluginVersion in gradle.properties
-          sed -i "s/^pluginVersion = .*/pluginVersion = $CURRENT/" gradle.properties
-
-      - name: Commit version bump
-        if: steps.guard.outputs.skip != 'true'
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add gradle.properties
-          if git diff --staged --quiet; then
-            echo "Version already up to date"
-          else
-            git commit -m "chore: bump version to ${{ steps.version.outputs.version }}"
-            git push origin HEAD:main
-          fi
 
       - uses: actions/setup-java@v4
         with:
@@ -87,11 +57,9 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       - name: Build Plugin
-        if: steps.guard.outputs.skip != 'true'
-        run: ./gradlew buildPlugin "-PpluginVersion=${{ steps.version.outputs.version }}" --warn
+        run: ./gradlew buildPlugin "-PpluginVersion=${{ steps.version.outputs.version }}"
 
       - name: Create tag and release
-        if: steps.guard.outputs.skip != 'true'
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -99,9 +67,8 @@ jobs:
           git push origin "${{ steps.version.outputs.tag }}"
 
       - uses: softprops/action-gh-release@v2
-        if: steps.guard.outputs.skip != 'true'
         with:
           tag_name: "${{ steps.version.outputs.tag }}"
           name: "${{ steps.version.outputs.tag }}"
-          files: "${{ steps.version.outputs.zip }}"
+          files: "build/distributions/claude-api-switch-${{ steps.version.outputs.version }}.zip"
           generate_release_notes: true
