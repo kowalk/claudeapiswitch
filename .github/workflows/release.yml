@@ -1,0 +1,85 @@
+name: Build and Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute version and tag
+        id: version
+        run: |
+          # Read current version from gradle.properties
+          CURRENT=$(grep '^pluginVersion' gradle.properties | cut -d'=' -f2 | tr -d ' ')
+          echo "Current version: $CURRENT"
+
+          # Find next available patch version
+          PATCH=0
+          while true; do
+            TAG="v${CURRENT}"
+            if git rev-parse "$TAG" >/dev/null 2>&1; then
+              # Tag exists, bump patch
+              MAJOR=$(echo "$CURRENT" | cut -d'.' -f1)
+              MINOR=$(echo "$CURRENT" | cut -d'.' -f2)
+              PATCH=$(( $(echo "$CURRENT" | cut -d'.' -f3) + 1 ))
+              CURRENT="${MAJOR}.${MINOR}.${PATCH}"
+            else
+              break
+            fi
+          done
+
+          TAG="v${CURRENT}"
+          echo "version=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "zip=build/distributions/claude-api-switch-${CURRENT}.zip" >> "$GITHUB_OUTPUT"
+
+          # Update gradle.properties with resolved version
+          sed -i "s/^pluginVersion = .*/pluginVersion = $CURRENT/" gradle.properties
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build Plugin
+        run: ./gradlew buildPlugin
+
+      - name: Commit version bump and push tag
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Commit version bump if gradle.properties changed
+          git add gradle.properties
+          if git diff --staged --quiet; then
+            echo "No version bump needed"
+          else
+            git commit -m "chore: bump version to ${{ steps.version.outputs.version }}"
+            git push origin HEAD:${GITHUB_REF_NAME}
+          fi
+
+          # Create and push tag
+          git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "${{ steps.version.outputs.tag }}"
+          name: "${{ steps.version.outputs.tag }}"
+          files: "${{ steps.version.outputs.zip }}"
+          generate_release_notes: true

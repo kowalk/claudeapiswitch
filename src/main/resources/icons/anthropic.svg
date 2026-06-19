@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <!-- Anthropic: amber rounded rect with A -->
+  <rect x="0.5" y="0.5" width="15" height="15" rx="3" fill="#E8774A"/>
+  <path d="M4.8 12 L7 5 L9.2 5 L11.4 12 L10 12 L9.3 10.5 L7 10.5 L6.3 12 Z" fill="#FFFFFF"/>
+  <path d="M7.3 9 L9 9 L8.2 6.5 Z" fill="#FFFFFF"/>
+</svg>

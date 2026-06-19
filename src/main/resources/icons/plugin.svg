@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <!-- Plugin icon: toggle/switch arrows forming a circle -->
+  <!-- Left arrow (DeepSeek blue) -->
+  <path d="M3 8 L5 6 L5 7.5 L9 7.5 L9 8.5 L5 8.5 L5 10 Z" fill="#4F6FEE"/>
+  <!-- Right arrow (Anthropic amber) -->
+  <path d="M13 8 L11 10 L11 8.5 L7 8.5 L7 7.5 L11 7.5 L11 6 Z" fill="#E8774A"/>
+  <!-- Circle background -->
+  <circle cx="8" cy="8" r="7.5" fill="none" stroke="#6E6E6E" stroke-width="0.5"/>
+</svg>

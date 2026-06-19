@@ -1,0 +1,70 @@
+<idea-plugin>
+    <id>com.github.kowalk.claude-api-switch</id>
+    <name>Claude API Switch</name>
+    <vendor url="https://github.com/kowalk/claude-api-switch">kowal</vendor>
+
+    <description><![CDATA[
+        Easily switch Claude Code between Anthropic's API and DeepSeek's
+        Anthropic-compatible API. Provides a status bar indicator, menu
+        actions, and shell profile synchronization for environment variables.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <!-- Application services -->
+    <extensions defaultExtensionNs="com.intellij">
+        <applicationService
+            serviceImplementation="com.github.kowalk.claudeapiswitch.settings.PluginSettings"/>
+        <applicationService
+            serviceImplementation="com.github.kowalk.claudeapiswitch.services.ProviderService"/>
+
+        <!-- Settings page under Tools -->
+        <projectConfigurable
+            parentId="tools"
+            instance="com.github.kowalk.claudeapiswitch.ui.PluginSettingsConfigurable"
+            id="com.github.kowalk.claude-api-switch.settings"
+            displayName="Claude API Switch"
+            nonDefaultProject="false"/>
+
+        <!-- Notification group for warnings -->
+        <notificationGroup id="ClaudeApiSwitch.Notifications"
+                           displayType="BALLOON"/>
+
+        <!-- Status bar widget -->
+        <statusBarWidgetFactory
+            id="claude-api-switch.widget"
+            implementation="com.github.kowalk.claudeapiswitch.widget.ProviderStatusWidgetFactory"
+            order="after PERF_MEMORY_INDICATOR"/>
+
+    </extensions>
+
+    <actions>
+        <!-- Toolbar toggle action (shows icon in top bar) -->
+        <action id="ClaudeDeepSeekSwitch.ToggleProvider"
+                class="com.github.kowalk.claudeapiswitch.actions.ToggleProviderToolbarAction"
+                text="Toggle Claude Code API Provider"
+                description="Switch Claude Code between Anthropic and DeepSeek APIs"
+                icon="/icons/anthropic.svg">
+            <add-to-group group-id="MainToolbarRight" anchor="last"/>
+            <add-to-group group-id="MainToolBar" anchor="last"/>
+        </action>
+
+        <group id="ClaudeDeepSeekSwitch.ToolsMenu"
+               text="Claude API Switch"
+               description="Switch Claude Code API provider"
+               popup="true"
+               icon="/icons/plugin.svg">
+            <action id="ClaudeDeepSeekSwitch.SwitchToAnthropic"
+                    class="com.github.kowalk.claudeapiswitch.actions.SwitchToAnthropicAction"
+                    text="Switch to Anthropic API"
+                    description="Use default Anthropic API for Claude Code"
+                    icon="/icons/anthropic.svg"/>
+            <action id="ClaudeDeepSeekSwitch.SwitchToDeepSeek"
+                    class="com.github.kowalk.claudeapiswitch.actions.SwitchToDeepSeekAction"
+                    text="Switch to DeepSeek API"
+                    description="Use DeepSeek API (Anthropic-compatible) for Claude Code"
+                    icon="/icons/deepseek.svg"/>
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </group>
+    </actions>
+</idea-plugin>
