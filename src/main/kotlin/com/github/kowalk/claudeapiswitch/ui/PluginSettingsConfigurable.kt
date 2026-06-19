@@ -191,9 +191,7 @@ WSL users: set this to your WSL ~/.bashrc path, e.g. \\wsl${'$'}\Ubuntu\home\use
         settings.syncToProfile = syncToProfileCheckbox.isSelected
         settings.profilePath = profilePathField.text
 
-        if (key.isNotBlank()) {
-            service.setDeepSeekApiKey(key)
-        }
+        service.setDeepSeekApiKey(key.ifBlank { null })
     }
 
     override fun reset() {

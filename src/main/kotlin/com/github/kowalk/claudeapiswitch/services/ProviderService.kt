@@ -112,7 +112,7 @@ class ProviderService {
     fun getDeepSeekApiKey(): String? =
         PasswordSafe.instance.getPassword(credentialAttributes)
 
-    fun setDeepSeekApiKey(key: String) {
+    fun setDeepSeekApiKey(key: String?) {
         PasswordSafe.instance.setPassword(credentialAttributes, key)
     }
 

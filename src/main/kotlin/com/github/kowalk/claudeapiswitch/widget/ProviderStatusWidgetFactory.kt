@@ -9,7 +9,7 @@ import com.intellij.openapi.wm.StatusBarWidgetFactory
 
 class ProviderStatusWidgetFactory : StatusBarWidgetFactory {
 
-    override fun getId(): String = "claude-deepseek-switch.widget"
+    override fun getId(): String = "claude-api-switch.widget"
 
     override fun getDisplayName(): String = "Claude AI Provider"
 
