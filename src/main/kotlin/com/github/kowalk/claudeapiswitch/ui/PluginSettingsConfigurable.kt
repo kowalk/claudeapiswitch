@@ -30,6 +30,7 @@ class PluginSettingsConfigurable : Configurable {
     private var profilePathField = JBTextField()
 
     private var panel: JPanel? = null
+    private var resetApiKey: String = ""
 
     override fun getDisplayName(): String = "Claude API Switch"
 
@@ -175,7 +176,7 @@ WSL users: set this to your WSL ~/.bashrc path, e.g. \\wsl${'$'}\Ubuntu\home\use
                 effortLevelField.text != settings.deepseekEffortLevel ||
                 syncToProfileCheckbox.isSelected != settings.syncToProfile ||
                 profilePathField.text != settings.profilePath ||
-                key != (service.getDeepSeekApiKey() ?: "")
+                key != resetApiKey
     }
 
     override fun apply() {
@@ -195,7 +196,8 @@ WSL users: set this to your WSL ~/.bashrc path, e.g. \\wsl${'$'}\Ubuntu\home\use
     }
 
     override fun reset() {
-        apiKeyField.text = service.getDeepSeekApiKey() ?: ""
+        resetApiKey = service.getDeepSeekApiKey() ?: ""
+        apiKeyField.text = resetApiKey
         baseUrlField.text = settings.deepseekBaseUrl
         modelField.text = settings.deepseekModel
         opusModelField.text = settings.deepseekOpusModel

@@ -42,6 +42,8 @@ class ProviderService {
 
     private val credentialAttributes = CredentialAttributes("ClaudeApiSwitch")
 
+    @Volatile private var configuredCache: Boolean? = null
+
     // --- Public API ---
 
     fun getCurrentProvider(): Provider =
@@ -68,8 +70,13 @@ class ProviderService {
         )
     }
 
-    fun isDeepSeekConfigured(): Boolean =
-        !getDeepSeekApiKey().isNullOrBlank()
+    fun isDeepSeekConfigured(): Boolean {
+        val cached = configuredCache
+        if (cached != null) return cached
+        val result = !getDeepSeekApiKey().isNullOrBlank()
+        configuredCache = result
+        return result
+    }
 
     fun switchToAnthropic() {
         val settings = PluginSettings.getInstance()
@@ -77,7 +84,7 @@ class ProviderService {
 
         if (settings.appState.syncToProfile) {
             warnIfForeignEnvVars()
-            removeProfileBlock()
+            if (!removeProfileBlock()) notifyProfileSyncFailed()
         }
 
         fireProviderChanged(Provider.ANTHROPIC)
@@ -98,7 +105,7 @@ class ProviderService {
 
         if (settings.appState.syncToProfile) {
             warnIfForeignEnvVars()
-            writeProfileBlock(apiKey)
+            if (!writeProfileBlock(apiKey)) notifyProfileSyncFailed()
         }
 
         fireProviderChanged(Provider.DEEPSEEK)
@@ -114,6 +121,7 @@ class ProviderService {
 
     fun setDeepSeekApiKey(key: String?) {
         PasswordSafe.instance.setPassword(credentialAttributes, key)
+        configuredCache = !key.isNullOrBlank()
     }
 
     // --- Profile file operations ---
@@ -141,9 +149,9 @@ class ProviderService {
         return settings.profilePath.ifBlank { getDefaultProfilePath() }
     }
 
-    private fun writeProfileBlock(apiKey: String) {
+    private fun writeProfileBlock(apiKey: String): Boolean {
         val profilePath = resolveProfilePath()
-        if (profilePath.isBlank()) return
+        if (profilePath.isBlank()) return true
 
         val settings = PluginSettings.getInstance().appState
         val isPowerShell = profilePath.endsWith(".ps1", ignoreCase = true)
@@ -178,10 +186,8 @@ class ProviderService {
 
         try {
             val file = File(profilePath)
-            // Ensure parent directory exists
             file.parentFile?.mkdirs()
 
-            // Remove any existing marker block, then append the new one
             val existing = if (file.exists()) file.readText() else ""
             val cleaned = removeMarkerBlock(existing, isPowerShell)
             val updated = if (cleaned.isNotBlank() && !cleaned.endsWith("\n")) {
@@ -192,67 +198,58 @@ class ProviderService {
                 "$block\n"
             }
 
-            // Atomic write: write to temp file then rename
             val tempFile = File("$profilePath.tmp")
             tempFile.writeText(updated)
-            Files.move(
-                tempFile.toPath(),
-                file.toPath(),
-                StandardCopyOption.REPLACE_EXISTING,
-                StandardCopyOption.REPLACE_EXISTING
-            )
+            Files.move(tempFile.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
             logger.info("Profile block written to $profilePath")
+            return true
         } catch (e: Exception) {
             logger.warn("Failed to write profile block to $profilePath: ${e.message}")
+            return false
         }
     }
 
-    private fun removeProfileBlock() {
+    private fun removeProfileBlock(): Boolean {
         val profilePath = resolveProfilePath()
-        if (profilePath.isBlank()) return
+        if (profilePath.isBlank()) return true
 
         val isPowerShell = profilePath.endsWith(".ps1", ignoreCase = true)
 
         try {
             val file = File(profilePath)
-            if (!file.exists()) return
+            if (!file.exists()) return true
 
             val content = file.readText()
             val cleaned = removeMarkerBlock(content, isPowerShell)
 
             if (cleaned != content) {
-                // Atomic write
                 val tempFile = File("$profilePath.tmp")
                 tempFile.writeText(cleaned)
-                Files.move(
-                    tempFile.toPath(),
-                    file.toPath(),
-                    StandardCopyOption.REPLACE_EXISTING,
-                    StandardCopyOption.REPLACE_EXISTING
-                )
+                Files.move(tempFile.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
                 logger.info("Profile block removed from $profilePath")
             }
+            return true
         } catch (e: Exception) {
             logger.warn("Failed to remove profile block from $profilePath: ${e.message}")
+            return false
         }
     }
 
     internal fun removeMarkerBlock(content: String, isPowerShell: Boolean): String {
         var cleaned = content
 
-        // Remove current-marker blocks
         val currentPattern = if (isPowerShell) {
             Regex("""[\r\n]*<# claude-api-switch #>[\s\S]*?<# claude-api-switch-end #>[\r\n]*""")
         } else {
-            Regex("""[\r\n]*# claude-api-switch\n[\s\S]*?# claude-api-switch-end\n?""")
+            Regex("""[\r\n]*# claude-api-switch\r?\n[\s\S]*?# claude-api-switch-end\r?\n?""")
         }
         cleaned = cleaned.replace(currentPattern, "")
 
-        // Also remove old-marker blocks (backward compat with pre-rename plugin)
+        // backward compat: pre-rename plugin used "claude-deepseek-switch" markers
         val oldPattern = if (isPowerShell) {
             Regex("""[\r\n]*<# claude-deepseek-switch #>[\s\S]*?<# claude-deepseek-switch-end #>[\r\n]*""")
         } else {
-            Regex("""[\r\n]*# claude-deepseek-switch\n[\s\S]*?# claude-deepseek-switch-end\n?""")
+            Regex("""[\r\n]*# claude-deepseek-switch\r?\n[\s\S]*?# claude-deepseek-switch-end\r?\n?""")
         }
         cleaned = cleaned.replace(oldPattern, "")
 
@@ -324,6 +321,20 @@ class ProviderService {
             )
         notification.notify(project)
         logger.warn("Foreign Claude env vars in $profilePath: ${foreign.joinToString()}")
+    }
+
+    private fun notifyProfileSyncFailed() {
+        val project = ProjectManager.getInstance().openProjects.firstOrNull() ?: return
+        val profilePath = resolveProfilePath()
+        NotificationGroupManager.getInstance()
+            .getNotificationGroup("ClaudeApiSwitch.Notifications")
+            .createNotification(
+                "Profile sync failed",
+                "Could not update ${File(profilePath).name}. Check file permissions.\n" +
+                        "The provider was switched in-IDE only.",
+                NotificationType.WARNING
+            )
+            .notify(project)
     }
 
     private fun notifySwitchComplete(providerName: String) {

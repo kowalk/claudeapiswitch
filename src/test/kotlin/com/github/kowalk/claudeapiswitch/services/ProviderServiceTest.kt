@@ -112,6 +112,29 @@ class ProviderServiceTest {
     }
 
     @Test
+    fun testRemoveBashMarkersCrlf() {
+        // Bash profile with Windows CRLF line endings — must still strip the block
+        val content = "# some config\r\n# claude-api-switch\r\nexport ANTHROPIC_BASE_URL=\"x\"\r\n# claude-api-switch-end\r\n# other config\r\n"
+
+        val result = service.removeMarkerBlock(content, false)
+
+        assertFalse(result.contains("claude-api-switch"))
+        assertFalse(result.contains("ANTHROPIC_BASE_URL"))
+        assertTrue(result.contains("some config"))
+        assertTrue(result.contains("other config"))
+    }
+
+    @Test
+    fun testRemoveOldBashMarkersCrlf() {
+        val content = "# claude-deepseek-switch\r\nexport ANTHROPIC_BASE_URL=\"x\"\r\n# claude-deepseek-switch-end\r\n"
+
+        val result = service.removeMarkerBlock(content, false)
+
+        assertFalse(result.contains("claude-deepseek-switch"))
+        assertFalse(result.contains("ANTHROPIC_BASE_URL"))
+    }
+
+    @Test
     fun testRemovesAllEightEnvVars() {
         val content = """
             # claude-api-switch
