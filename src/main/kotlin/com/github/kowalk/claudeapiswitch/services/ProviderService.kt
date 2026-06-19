@@ -235,7 +235,7 @@ class ProviderService {
         }
     }
 
-    private fun removeMarkerBlock(content: String, isPowerShell: Boolean): String {
+    internal fun removeMarkerBlock(content: String, isPowerShell: Boolean): String {
         var cleaned = content
 
         // Remove current-marker blocks
