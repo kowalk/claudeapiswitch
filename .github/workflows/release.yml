@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - main
-    tags:
-      - 'v*'
   workflow_dispatch:
 
 permissions:
@@ -27,7 +25,6 @@ jobs:
       - run: ./gradlew build
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -36,31 +33,24 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Compute version and tag
+      - name: Compute next version and tag
         id: version
         run: |
           CURRENT=$(grep '^pluginVersion' gradle.properties | cut -d'=' -f2 | tr -d ' ')
-          echo "Current version: $CURRENT"
+          echo "Base version: $CURRENT"
 
-          PATCH=0
-          while true; do
-            TAG="v${CURRENT}"
-            if git rev-parse "$TAG" >/dev/null 2>&1; then
-              MAJOR=$(echo "$CURRENT" | cut -d'.' -f1)
-              MINOR=$(echo "$CURRENT" | cut -d'.' -f2)
-              PATCH=$(( $(echo "$CURRENT" | cut -d'.' -f3) + 1 ))
-              CURRENT="${MAJOR}.${MINOR}.${PATCH}"
-            else
-              break
-            fi
+          # Find next available patch version
+          while git rev-parse "v${CURRENT}" >/dev/null 2>&1; do
+            MAJOR=$(echo "$CURRENT" | cut -d'.' -f1)
+            MINOR=$(echo "$CURRENT" | cut -d'.' -f2)
+            PATCH=$(( $(echo "$CURRENT" | cut -d'.' -f3) + 1 ))
+            CURRENT="${MAJOR}.${MINOR}.${PATCH}"
           done
 
           TAG="v${CURRENT}"
           echo "version=$CURRENT" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "zip=build/distributions/claude-api-switch-${CURRENT}.zip" >> "$GITHUB_OUTPUT"
-
-          sed -i "s/^pluginVersion = .*/pluginVersion = $CURRENT/" gradle.properties
 
       - uses: actions/setup-java@v4
         with:
@@ -69,25 +59,17 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - run: ./gradlew buildPlugin
+      - name: Build Plugin
+        run: ./gradlew buildPlugin "-PpluginVersion=${{ steps.version.outputs.version }}"
 
-      - name: Commit version bump and push tag
-        if: github.event_name == 'workflow_dispatch'
+      - name: Create tag and release
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add gradle.properties
-          if git diff --staged --quiet; then
-            echo "No version bump needed"
-          else
-            git commit -m "chore: bump version to ${{ steps.version.outputs.version }}"
-            git push origin HEAD:${GITHUB_REF_NAME}
-          fi
           git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.tag }}"
           git push origin "${{ steps.version.outputs.tag }}"
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v2
         with:
           tag_name: "${{ steps.version.outputs.tag }}"
           name: "${{ steps.version.outputs.tag }}"
