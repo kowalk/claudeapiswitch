@@ -124,8 +124,8 @@ class ProviderService {
 
         return when {
             osName.contains("windows") -> {
-                // Default to PowerShell profile on Windows
-                "$home\\Documents\\WindowsPowerShell\\Microsoft.PowerShell_profile.ps1"
+                // PowerShell 7+ default profile (modern Windows)
+                "$home\\Documents\\PowerShell\\Microsoft.PowerShell_profile.ps1"
             }
             else -> {
                 // .bashrc is sourced by interactive shells on Linux; .profile is login-only
@@ -197,7 +197,7 @@ class ProviderService {
                 tempFile.toPath(),
                 file.toPath(),
                 StandardCopyOption.REPLACE_EXISTING,
-                StandardCopyOption.ATOMIC_MOVE
+                StandardCopyOption.REPLACE_EXISTING
             )
             logger.info("Profile block written to $profilePath")
         } catch (e: Exception) {
@@ -226,7 +226,7 @@ class ProviderService {
                     tempFile.toPath(),
                     file.toPath(),
                     StandardCopyOption.REPLACE_EXISTING,
-                    StandardCopyOption.ATOMIC_MOVE
+                    StandardCopyOption.REPLACE_EXISTING
                 )
                 logger.info("Profile block removed from $profilePath")
             }

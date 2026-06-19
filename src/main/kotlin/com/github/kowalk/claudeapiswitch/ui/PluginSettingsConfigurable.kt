@@ -150,7 +150,8 @@ class PluginSettingsConfigurable : Configurable {
         p.add(JBLabel("Profile path:"), c)
         c.gridx = 1; c.weightx = 1.0
         profilePathField.columns = 50
-        profilePathField.toolTipText = "Path to your shell profile file. Auto-detected based on OS."
+        profilePathField.toolTipText = """Path to your shell profile file. Auto-detected based on OS.
+WSL users: set this to your WSL ~/.bashrc path, e.g. \\wsl${'$'}\Ubuntu\home\user\.bashrc"""
         p.add(profilePathField, c)
         row++
 
