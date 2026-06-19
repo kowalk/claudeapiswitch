@@ -124,8 +124,10 @@ class ProviderService {
 
         return when {
             osName.contains("windows") -> {
-                // PowerShell 7+ default profile (modern Windows)
-                "$home\\Documents\\PowerShell\\Microsoft.PowerShell_profile.ps1"
+                // Prefer PS7 if its profile directory already exists, otherwise fall back to PS5
+                val ps7 = "$home\\Documents\\PowerShell\\Microsoft.PowerShell_profile.ps1"
+                val ps5 = "$home\\Documents\\WindowsPowerShell\\Microsoft.PowerShell_profile.ps1"
+                if (File(ps7).parentFile.exists()) ps7 else ps5
             }
             else -> {
                 // .bashrc is sourced by interactive shells on Linux; .profile is login-only
