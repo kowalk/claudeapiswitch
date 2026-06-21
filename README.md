@@ -1,13 +1,13 @@
-# Claude API Switch — PhpStorm Plugin
+# Claude API Switch — JetBrains IDE Plugin
 
-Toggle [Claude Code](https://claude.com/claude-code) between Anthropic's native API and [DeepSeek's Anthropic-compatible API](https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code) directly from the IDE.
+Toggle [Claude Code](https://claude.com/claude-code) between Anthropic's native API and [DeepSeek's Anthropic-compatible API](https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code) directly from any JetBrains IDE.
 
 ## Features
 
 - **Toolbar icon** — one-click toggle from the top toolbar, right next to the Claude Code icon
 - **Status bar indicator** — shows current provider (🟠 Anthropic / 🔵 DeepSeek) with one-click switch
 - **Tools menu** — `Tools → Claude API Switch` with labeled toggle actions and icons
-- **Profile synchronization** — writes all required environment variables to your shell profile so `claude` works in any terminal, not just inside PhpStorm
+- **Profile synchronization** — writes all required environment variables to your shell profile so `claude` works in any terminal, not just inside the IDE
 - **Foreign var detection** — warns if manually configured Claude Code env vars outside the plugin's control are found in your profile
 - **Settings page** — `Settings → Tools → Claude API Switch` for API key (stored in OS keychain), model selection, and profile path
 
@@ -31,8 +31,8 @@ All variables follow the [DeepSeek Claude Code integration guide](https://api-do
 ### From ZIP (recommended)
 
 1. Download `claude-api-switch-*.zip` from [Releases](https://github.com/kowalk/claude-api-switch/releases)
-2. In PhpStorm: **Settings → Plugins → ⚙ → Install Plugin from Disk…**
-3. Select the ZIP file and restart PhpStorm
+2. In your IDE: **Settings → Plugins → ⚙ → Install Plugin from Disk…**
+3. Select the ZIP file and restart your IDE
 
 ### From Source
 
@@ -60,7 +60,7 @@ After switching, restart any active Claude Code sessions for the change to take 
 
 ## Requirements
 
-- PhpStorm 2026.1 or later
+- Any JetBrains IDE 2025.1 or later (IntelliJ IDEA, PyCharm, WebStorm, PhpStorm, GoLand, etc.)
 - [Claude Code](https://claude.com/claude-code) installed (`npm install -g @anthropic-ai/claude-code`)
 - A [DeepSeek API key](https://platform.deepseek.com/) (only needed for DeepSeek mode)
 

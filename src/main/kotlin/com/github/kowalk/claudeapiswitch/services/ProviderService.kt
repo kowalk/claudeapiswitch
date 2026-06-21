@@ -85,6 +85,7 @@ class ProviderService {
         if (settings.appState.syncToProfile) {
             warnIfForeignEnvVars()
             if (!removeProfileBlock()) notifyProfileSyncFailed()
+            writeUnsetBlockIfProcessHasDeepSeek()
         }
 
         fireProviderChanged(Provider.ANTHROPIC)
@@ -213,26 +214,77 @@ class ProviderService {
         val profilePath = resolveProfilePath()
         if (profilePath.isBlank()) return true
 
-        val isPowerShell = profilePath.endsWith(".ps1", ignoreCase = true)
+        // Clean the primary profile and any sibling profiles that commonly
+        // contain leftover env vars (e.g. .profile when .bashrc is primary)
+        val pathsToClean = mutableSetOf(profilePath)
+        val home = System.getProperty("user.home") ?: ""
+        if (home.isNotBlank()) {
+            for (sibling in listOf("$home/.profile", "$home/.bash_profile", "$home/.bashrc", "$home/.zshrc")) {
+                if (sibling != profilePath && File(sibling).exists()) {
+                    pathsToClean.add(sibling)
+                }
+            }
+        }
+
+        var allOk = true
+        for (path in pathsToClean) {
+            if (!cleanProfileFile(path)) allOk = false
+        }
+        return allOk
+    }
+
+    /**
+     * Removes ALL ANTHROPIC_* / CLAUDE_CODE_* assignments from a profile file —
+     * both plugin-managed marker blocks and any foreign/unguarded lines.
+     */
+    private fun cleanProfileFile(path: String): Boolean {
+        val isPowerShell = path.endsWith(".ps1", ignoreCase = true)
 
         try {
-            val file = File(profilePath)
+            val file = File(path)
             if (!file.exists()) return true
 
             val content = file.readText()
-            val cleaned = removeMarkerBlock(content, isPowerShell)
+            val cleaned = stripAllClaudeEnvVars(content, isPowerShell)
 
             if (cleaned != content) {
-                val tempFile = File("$profilePath.tmp")
+                val tempFile = File("$path.tmp")
                 tempFile.writeText(cleaned)
                 Files.move(tempFile.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
-                logger.info("Profile block removed from $profilePath")
+                logger.info("Claude env vars stripped from $path")
             }
             return true
         } catch (e: Exception) {
-            logger.warn("Failed to remove profile block from $profilePath: ${e.message}")
+            logger.warn("Failed to clean $path: ${e.message}", e)
             return false
         }
+    }
+
+    /**
+     * Strips plugin marker blocks first, then any remaining un-guarded
+     * ANTHROPIC_* / CLAUDE_CODE_* export lines.
+     */
+    internal fun stripAllClaudeEnvVars(content: String, isPowerShell: Boolean): String {
+        var cleaned = content
+
+        // 1. Remove plugin-managed marker blocks (both current and old markers)
+        cleaned = removeMarkerBlock(cleaned, isPowerShell)
+
+        // 2. Strip any remaining ANTHROPIC_* / CLAUDE_CODE_* lines that were
+        //    set outside the plugin's markers (foreign / manual overrides).
+        //    Match the whole line (including newline) containing the assignment.
+        //    [$] in regex matches a literal $ char (avoids Kotlin template conflict).
+        val foreignRegex = if (isPowerShell) {
+            Regex("""^[ \t]*[$]env:(ANTHROPIC_\w+|CLAUDE_CODE_\w+)\s*=\s*.*(\r?\n|${'$'})""", RegexOption.MULTILINE)
+        } else {
+            Regex("""^[ \t]*export\s+(ANTHROPIC_\w+|CLAUDE_CODE_\w+)=.*(\r?\n|${'$'})""", RegexOption.MULTILINE)
+        }
+        cleaned = foreignRegex.replace(cleaned, "")
+
+        // 3. Collapse runs of blank lines
+        cleaned = cleaned.replace(Regex("""\n{3,}"""), "\n\n")
+
+        return cleaned
     }
 
     internal fun removeMarkerBlock(content: String, isPowerShell: Boolean): String {
@@ -254,6 +306,69 @@ class ProviderService {
         cleaned = cleaned.replace(oldPattern, "")
 
         return cleaned
+    }
+
+    /**
+     * When the IDE process itself was launched with DeepSeek env vars (e.g. after a
+     * prior switch wrote them to the shell profile), child processes — including new
+     * terminal shells — inherit those vars regardless of what the profile now says.
+     *
+     * To break the inheritance chain, we write an *unset* block into the profile that
+     * the new shell will source on startup, neutralizing the inherited variables.
+     */
+    private fun writeUnsetBlockIfProcessHasDeepSeek() {
+        if (!processHasDeepSeekEnvVars()) return
+        val profilePath = resolveProfilePath()
+        if (profilePath.isBlank()) return
+
+        val isPowerShell = profilePath.endsWith(".ps1", ignoreCase = true)
+        val unsetVars = listOf(
+            "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL",
+            "CLAUDE_CODE_EFFORT_LEVEL"
+        )
+
+        val block = if (isPowerShell) {
+            buildString {
+                appendLine("<# claude-api-switch #>")
+                unsetVars.forEach { appendLine("Remove-Item Env:$it -ErrorAction SilentlyContinue") }
+                appendLine("<# claude-api-switch-end #>")
+            }
+        } else {
+            buildString {
+                appendLine("# claude-api-switch")
+                unsetVars.forEach { appendLine("unset $it 2>/dev/null || true") }
+                appendLine("# claude-api-switch-end")
+            }
+        }
+
+        try {
+            val file = File(profilePath)
+            file.parentFile?.mkdirs()
+
+            val existing = if (file.exists()) file.readText() else ""
+            val cleaned = removeMarkerBlock(existing, isPowerShell)
+            val updated = if (cleaned.isNotBlank() && !cleaned.endsWith("\n")) {
+                "$cleaned\n\n$block\n"
+            } else if (cleaned.isNotBlank()) {
+                "$cleaned\n$block\n"
+            } else {
+                "$block\n"
+            }
+
+            val tempFile = File("$profilePath.tmp")
+            tempFile.writeText(updated)
+            Files.move(tempFile.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            logger.info("DeepSeek unset block written to $profilePath (IDE had stale env vars)")
+        } catch (e: Exception) {
+            logger.warn("Failed to write unset block to $profilePath: ${e.message}")
+        }
+    }
+
+    private fun processHasDeepSeekEnvVars(): Boolean {
+        val baseUrl = System.getenv("ANTHROPIC_BASE_URL") ?: return false
+        return baseUrl.contains("deepseek", ignoreCase = true)
     }
 
     // --- Foreign env var detection ---
@@ -280,7 +395,7 @@ class ProviderService {
             // Look for ANTHROPIC_* or CLAUDE_CODE_* assignments outside our blocks
             val foreignVars = mutableListOf<String>()
             val envRegex = if (isPowerShell) {
-                Regex("""^\s*${'$'}env:(ANTHROPIC_\w+|CLAUDE_CODE_\w+)\s*=""", RegexOption.MULTILINE)
+                Regex("""^\s*[$]env:(ANTHROPIC_\w+|CLAUDE_CODE_\w+)\s*=""", RegexOption.MULTILINE)
             } else {
                 Regex("""^\s*export\s+(ANTHROPIC_\w+|CLAUDE_CODE_\w+)=""", RegexOption.MULTILINE)
             }

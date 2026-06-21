@@ -16,10 +16,8 @@ repositories {
 
 dependencies {
     intellijPlatform {
-        create(
-            providers.gradleProperty("platformType").get(),
-            providers.gradleProperty("platformVersion").get()
-        )
+        // Build against IntelliJ IDEA as the reference platform for cross-IDE compatibility
+        intellijIdea(providers.gradleProperty("platformVersion").get())
         testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Platform)
     }
 
@@ -29,10 +27,15 @@ dependencies {
 intellijPlatform {
     pluginConfiguration {
         ideaVersion {
-            sinceBuild = "261"
+            sinceBuild = "251"
             untilBuild = "261.*"
         }
         changeNotes = """
+            <h3>1.0.11</h3>
+            <ul>
+                <li>Cross-IDE support: now works in all JetBrains IDEs (IntelliJ IDEA, PyCharm, WebStorm, PhpStorm, etc.)</li>
+                <li>Widened compatibility range: 2025.1 — 2026.1.x</li>
+            </ul>
             <h3>1.0.0</h3>
             <ul>
                 <li>Initial release: toggle Claude Code between Anthropic and DeepSeek APIs</li>

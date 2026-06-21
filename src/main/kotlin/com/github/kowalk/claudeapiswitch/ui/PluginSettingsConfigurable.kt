@@ -142,7 +142,7 @@ class PluginSettingsConfigurable : Configurable {
         p.add(JPanel(), c)
         c.gridx = 1; c.weightx = 1.0
         syncToProfileCheckbox.toolTipText = "When enabled, all ANTHROPIC_* env vars are written to your shell " +
-                "profile so Claude Code works outside PhpStorm as well."
+                "profile so Claude Code works in any terminal as well."
         p.add(syncToProfileCheckbox, c)
         row++
 
