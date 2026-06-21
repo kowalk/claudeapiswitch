@@ -46,6 +46,50 @@ class ProviderService {
 
     @Volatile private var configuredCache: Boolean? = null
 
+    // Write a shared marker so other IDE instances can pick up the user's
+    // most recent explicit choice — even when the OS environment is stale.
+    private val sharedStateFile = File(
+        System.getProperty("user.home") ?: "/tmp",
+        ".config/claude-api-switch-state"
+    )
+
+    init {
+        val settings = PluginSettings.getInstance()
+
+        // 1. Shared state file (last explicit switch from any IDE instance).
+        // 2. Fall back to OS environment.
+        val shared = readSharedProvider()
+        when {
+            shared != null -> {
+                settings.appState.currentProvider = shared
+                logger.info("Initialised from shared state: $shared")
+            }
+            !System.getenv("ANTHROPIC_BASE_URL").isNullOrBlank() -> {
+                settings.appState.currentProvider = Provider.DEEPSEEK
+                logger.info("Initialised from OS environment: DEEPSEEK")
+            }
+        }
+    }
+
+    private fun readSharedProvider(): Provider? {
+        return try {
+            if (!sharedStateFile.exists()) return null
+            val content = sharedStateFile.readText().trim()
+            Provider.entries.find { it.name == content }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun writeSharedProvider(provider: Provider) {
+        try {
+            sharedStateFile.parentFile?.mkdirs()
+            sharedStateFile.writeText(provider.name)
+        } catch (e: Exception) {
+            logger.warn("Could not write shared state: ${e.message}")
+        }
+    }
+
     private val DEEPSEEK_ENV_VARS = listOf(
         "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL",
         "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
@@ -99,6 +143,7 @@ class ProviderService {
             }
 
             envPatcher.clearVars(DEEPSEEK_ENV_VARS)
+            writeSharedProvider(Provider.ANTHROPIC)
 
             ApplicationManager.getApplication().invokeLater {
                 fireProviderChanged(Provider.ANTHROPIC)
@@ -127,6 +172,7 @@ class ProviderService {
             }
 
             setProcessEnv(apiKey, settings.appState)
+            writeSharedProvider(Provider.DEEPSEEK)
 
             ApplicationManager.getApplication().invokeLater {
                 fireProviderChanged(Provider.DEEPSEEK)
