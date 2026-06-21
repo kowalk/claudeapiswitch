@@ -48,10 +48,16 @@ class ProviderService {
 
     // Write a shared marker so other IDE instances can pick up the user's
     // most recent explicit choice — even when the OS environment is stale.
-    private val sharedStateFile = File(
-        System.getProperty("user.home") ?: "/tmp",
-        ".config/claude-api-switch-state"
-    )
+    private val sharedStateFile: File by lazy {
+        val osName = System.getProperty("os.name")?.lowercase(Locale.getDefault()) ?: ""
+        if (osName.contains("windows")) {
+            val appData = System.getenv("APPDATA") ?: System.getProperty("user.home") ?: "C:\\"
+            File(appData, "claude-api-switch-state")
+        } else {
+            val home = System.getProperty("user.home") ?: "/tmp"
+            File(home, ".config/claude-api-switch-state")
+        }
+    }
 
     init {
         val settings = PluginSettings.getInstance()
