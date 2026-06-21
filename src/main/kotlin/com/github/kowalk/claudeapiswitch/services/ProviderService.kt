@@ -84,9 +84,15 @@ class ProviderService {
 
         if (settings.appState.syncToProfile) {
             warnIfForeignEnvVars()
-            if (!removeProfileBlock()) notifyProfileSyncFailed()
-            writeUnsetBlockIfProcessHasDeepSeek()
+            removeProfileBlock()
         }
+
+        // Clear ANTHROPIC_* / CLAUDE_CODE_* vars from the IDE's own process
+        // environment so that child processes (Claude Code, terminals) no
+        // longer inherit them.  The profile file is not enough — when the IDE
+        // was launched from a shell that sourced the DeepSeek export block,
+        // those vars are baked into every child until explicitly stripped here.
+        clearDeepSeekProcessEnv()
 
         fireProviderChanged(Provider.ANTHROPIC)
         notifySwitchComplete("Anthropic")
@@ -108,6 +114,10 @@ class ProviderService {
             warnIfForeignEnvVars()
             if (!writeProfileBlock(apiKey)) notifyProfileSyncFailed()
         }
+
+        // Inject DeepSeek vars into the IDE's own process environment so that
+        // child processes (Claude Code CLI, terminals) see them immediately.
+        setDeepSeekProcessEnv(apiKey)
 
         fireProviderChanged(Provider.DEEPSEEK)
         notifySwitchComplete("DeepSeek")
@@ -309,36 +319,97 @@ class ProviderService {
     }
 
     /**
-     * When the IDE process itself was launched with DeepSeek env vars (e.g. after a
-     * prior switch wrote them to the shell profile), child processes — including new
-     * terminal shells — inherit those vars regardless of what the profile now says.
-     *
-     * To break the inheritance chain, we write an *unset* block into the profile that
-     * the new shell will source on startup, neutralizing the inherited variables.
+     * Injects DeepSeek config into the IDE's process environment so child
+     * processes inherit the settings immediately.
      */
-    private fun writeUnsetBlockIfProcessHasDeepSeek() {
-        if (!processHasDeepSeekEnvVars()) return
-        val profilePath = resolveProfilePath()
-        if (profilePath.isBlank()) return
+    private fun setDeepSeekProcessEnv(apiKey: String) {
+        val settings = PluginSettings.getInstance().appState
+        val vars = mapOf(
+            "ANTHROPIC_BASE_URL" to settings.deepseekBaseUrl,
+            "ANTHROPIC_AUTH_TOKEN" to apiKey,
+            "ANTHROPIC_MODEL" to settings.deepseekModel,
+            "ANTHROPIC_DEFAULT_OPUS_MODEL" to settings.deepseekOpusModel,
+            "ANTHROPIC_DEFAULT_SONNET_MODEL" to settings.deepseekSonnetModel,
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL" to settings.deepseekHaikuModel,
+            "CLAUDE_CODE_SUBAGENT_MODEL" to settings.deepseekSubagentModel,
+            "CLAUDE_CODE_EFFORT_LEVEL" to settings.deepseekEffortLevel
+        )
+        setProcessEnvVars(vars)
+    }
 
-        val isPowerShell = profilePath.endsWith(".ps1", ignoreCase = true)
-        val unsetVars = listOf(
+    /** Puts entries into the JVM process environment via [java.lang.ProcessEnvironment]. */
+    private fun setProcessEnvVars(vars: Map<String, String>) {
+        try {
+            val processEnvClass = Class.forName("java.lang.ProcessEnvironment")
+            val theEnvField = processEnvClass.getDeclaredField("theEnvironment")
+            theEnvField.isAccessible = true
+            @Suppress("UNCHECKED_CAST")
+            val env = theEnvField.get(null) as MutableMap<String, String>
+            env.putAll(vars)
+            logger.info("Set ${vars.size} env vars in IDE process environment")
+        } catch (e: Exception) {
+            logger.warn("Could not set process env vars: ${e.message}; profile sync is the fallback")
+        }
+    }
+
+    /**
+     * Strips ANTHROPIC_* and CLAUDE_CODE_* variables from the IDE's own process
+     * environment so that child processes (Claude Code CLI, new terminal shells)
+     * no longer inherit stale DeepSeek settings.
+     *
+     * Accesses the internal [java.lang.ProcessEnvironment.theEnvironment] map
+     * that backs both System.getenv() and ProcessBuilder.environment(); removing
+     * entries here means every subprocess spawned afterwards sees clean env.
+     *
+     * The reflective access is a widely-used JVM technique (many tools including
+     * IntelliJ itself rely on it).  If the module system blocks access the call
+     * degrades gracefully — the profile file is the fallback.
+     */
+    private fun clearDeepSeekProcessEnv() {
+        val vars = listOf(
             "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL",
             "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
             "ANTHROPIC_DEFAULT_HAIKU_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL",
             "CLAUDE_CODE_EFFORT_LEVEL"
         )
 
+        try {
+            val processEnvClass = Class.forName("java.lang.ProcessEnvironment")
+            val theEnvField = processEnvClass.getDeclaredField("theEnvironment")
+            theEnvField.isAccessible = true
+            @Suppress("UNCHECKED_CAST")
+            val env = theEnvField.get(null) as MutableMap<String, String>
+            for (v in vars) {
+                env.remove(v)
+            }
+            logger.info("Cleared ${vars.size} DeepSeek env vars from IDE process environment")
+        } catch (e: Exception) {
+            // Module system may block access; profile-file unset is the fallback.
+            logger.warn("Could not modify process environment: ${e.message}; falling back to profile unset")
+            writeProfileUnsetBlock(vars)
+        }
+    }
+
+    /**
+     * Fallback: write explicit unset commands into the shell profile so that new
+     * terminal shells neutralize inherited vars on startup.
+     */
+    private fun writeProfileUnsetBlock(vars: List<String>) {
+        val profilePath = resolveProfilePath()
+        if (profilePath.isBlank()) return
+
+        val isPowerShell = profilePath.endsWith(".ps1", ignoreCase = true)
+
         val block = if (isPowerShell) {
             buildString {
                 appendLine("<# claude-api-switch #>")
-                unsetVars.forEach { appendLine("Remove-Item Env:$it -ErrorAction SilentlyContinue") }
+                vars.forEach { appendLine("Remove-Item Env:$it -ErrorAction SilentlyContinue") }
                 appendLine("<# claude-api-switch-end #>")
             }
         } else {
             buildString {
                 appendLine("# claude-api-switch")
-                unsetVars.forEach { appendLine("unset $it 2>/dev/null || true") }
+                vars.forEach { appendLine("unset $it 2>/dev/null || true") }
                 appendLine("# claude-api-switch-end")
             }
         }
@@ -346,7 +417,6 @@ class ProviderService {
         try {
             val file = File(profilePath)
             file.parentFile?.mkdirs()
-
             val existing = if (file.exists()) file.readText() else ""
             val cleaned = removeMarkerBlock(existing, isPowerShell)
             val updated = if (cleaned.isNotBlank() && !cleaned.endsWith("\n")) {
@@ -356,19 +426,13 @@ class ProviderService {
             } else {
                 "$block\n"
             }
-
             val tempFile = File("$profilePath.tmp")
             tempFile.writeText(updated)
             Files.move(tempFile.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
-            logger.info("DeepSeek unset block written to $profilePath (IDE had stale env vars)")
+            logger.info("Unset block written to $profilePath (reflection fallback)")
         } catch (e: Exception) {
-            logger.warn("Failed to write unset block to $profilePath: ${e.message}")
+            logger.warn("Failed to write unset block: ${e.message}")
         }
-    }
-
-    private fun processHasDeepSeekEnvVars(): Boolean {
-        val baseUrl = System.getenv("ANTHROPIC_BASE_URL") ?: return false
-        return baseUrl.contains("deepseek", ignoreCase = true)
     }
 
     // --- Foreign env var detection ---
