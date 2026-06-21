@@ -46,56 +46,9 @@ class ProviderService {
 
     @Volatile private var configuredCache: Boolean? = null
 
-    // Write a shared marker so other IDE instances can pick up the user's
-    // most recent explicit choice — even when the OS environment is stale.
-    private val sharedStateFile: File by lazy {
-        val osName = System.getProperty("os.name")?.lowercase(Locale.getDefault()) ?: ""
-        if (osName.contains("windows")) {
-            val appData = System.getenv("APPDATA") ?: System.getProperty("user.home") ?: "C:\\"
-            File(appData, "claude-api-switch-state")
-        } else {
-            val home = System.getProperty("user.home") ?: "/tmp"
-            File(home, ".config/claude-api-switch-state")
-        }
-    }
-
-    init {
-        val settings = PluginSettings.getInstance()
-
-        // 1. Shared state file (last explicit switch from any IDE instance).
-        // 2. Fall back to OS environment.
-        val shared = readSharedProvider()
-        when {
-            shared != null -> {
-                settings.appState.currentProvider = shared
-                logger.info("Initialised from shared state: $shared")
-            }
-            !System.getenv("ANTHROPIC_BASE_URL").isNullOrBlank() -> {
-                settings.appState.currentProvider = Provider.DEEPSEEK
-                logger.info("Initialised from OS environment: DEEPSEEK")
-            }
-        }
-    }
-
-    private fun readSharedProvider(): Provider? {
-        return try {
-            if (!sharedStateFile.exists()) return null
-            val content = sharedStateFile.readText().trim()
-            Provider.entries.find { it.name == content }
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    private fun writeSharedProvider(provider: Provider) {
-        try {
-            sharedStateFile.parentFile?.mkdirs()
-            sharedStateFile.writeText(provider.name)
-        } catch (e: Exception) {
-            logger.warn("Could not write shared state: ${e.message}")
-        }
-    }
-
+    // Must be declared before init — the init block calls profileManager which captures this.
+    // Kotlin initialises properties in source order; if DEEPSEEK_ENV_VARS were after init,
+    // the lazy lambda would capture null.
     private val DEEPSEEK_ENV_VARS = listOf(
         "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL",
         "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
@@ -103,6 +56,32 @@ class ProviderService {
         "CLAUDE_CODE_EFFORT_LEVEL"
     )
 
+    init {
+        // Always resolve provider from live state so a stale persisted XML value
+        // never wins.  Shell profile is primary; systemd is fallback when the
+        // profile file doesn't exist or has no managed block yet.
+        val fromProfile = profileManager.hasExportBlock()
+        val fromSystemd = !fromProfile && isDeepSeekActiveInSystemd()
+        val provider = if (fromProfile || fromSystemd) Provider.DEEPSEEK else Provider.ANTHROPIC
+        PluginSettings.getInstance().appState.currentProvider = provider
+        logger.info("Initialised as ${provider.name} (profile=$fromProfile, systemd=$fromSystemd)")
+    }
+
+    private fun isDeepSeekActiveInSystemd(): Boolean {
+        return try {
+            val proc = ProcessBuilder("systemctl", "--user", "show-environment")
+                .redirectErrorStream(true)
+                .start()
+            val output = proc.inputStream.bufferedReader().readText()
+            proc.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)
+            output.lineSequence().any { line ->
+                line.startsWith("ANTHROPIC_BASE_URL=") && line.substringAfter("=").isNotBlank()
+            }
+        } catch (_: Exception) {
+            // systemd unavailable (Windows, macOS, container) — fall back to process env
+            !System.getenv("ANTHROPIC_BASE_URL").isNullOrBlank()
+        }
+    }
     // ---- Public API ----
 
     fun getCurrentProvider(): Provider =
@@ -142,14 +121,14 @@ class ProviderService {
             val settings = PluginSettings.getInstance()
             settings.appState.currentProvider = Provider.ANTHROPIC
 
-            if (settings.appState.syncToProfile) {
-                warnIfForeignEnvVars()
-                profileManager.removeExportBlock()
-                profileManager.writeUnsetBlock()
-            }
-
+            // Always clean the profile and systemd so other IDE instances
+            // (and new shells) see the change.  The JVM-only clear is not
+            // enough — gnome-shell / systemd hold the OS-level env copy.
+            warnIfForeignEnvVars()
+            profileManager.removeExportBlock()
+            profileManager.writeUnsetBlock()
             envPatcher.clearVars(DEEPSEEK_ENV_VARS)
-            writeSharedProvider(Provider.ANTHROPIC)
+            clearOsEnvironment()
 
             ApplicationManager.getApplication().invokeLater {
                 fireProviderChanged(Provider.ANTHROPIC)
@@ -157,6 +136,17 @@ class ProviderService {
             }
             logger.info("Switched to Anthropic API")
         }
+    }
+
+    /** Best-effort: ask systemd to drop these vars from the user session. */
+    private fun clearOsEnvironment() {
+        try {
+            ProcessBuilder()
+                .command("systemctl", "--user", "unset-environment", *DEEPSEEK_ENV_VARS.toTypedArray())
+                .redirectErrorStream(true)
+                .start()
+            // fire-and-forget — systemd may not be present, and that's fine
+        } catch (_: Exception) { }
     }
 
     fun switchToDeepSeek() {
@@ -170,15 +160,14 @@ class ProviderService {
             val settings = PluginSettings.getInstance()
             settings.appState.currentProvider = Provider.DEEPSEEK
 
-            if (settings.appState.syncToProfile) {
-                warnIfForeignEnvVars()
-                if (!profileManager.writeExportBlock(apiKey)) {
-                    ApplicationManager.getApplication().invokeLater { notifyProfileSyncFailed() }
-                }
+            // Always write to profile and systemd so the OS environment is
+            // the authoritative source of truth.
+            warnIfForeignEnvVars()
+            if (!profileManager.writeExportBlock(apiKey)) {
+                ApplicationManager.getApplication().invokeLater { notifyProfileSyncFailed() }
             }
-
             setProcessEnv(apiKey, settings.appState)
-            writeSharedProvider(Provider.DEEPSEEK)
+            setOsEnvironment(settings.appState, apiKey)
 
             ApplicationManager.getApplication().invokeLater {
                 fireProviderChanged(Provider.DEEPSEEK)
@@ -186,6 +175,26 @@ class ProviderService {
             }
             logger.info("Switched to DeepSeek API (model: ${settings.appState.deepseekModel})")
         }
+    }
+
+    /** Best-effort: tell systemd about the DeepSeek vars for the user session. */
+    private fun setOsEnvironment(settings: PluginSettings.State, apiKey: String) {
+        try {
+            ProcessBuilder()
+                .command(
+                    "systemctl", "--user", "set-environment",
+                    "ANTHROPIC_BASE_URL=${settings.deepseekBaseUrl}",
+                    "ANTHROPIC_AUTH_TOKEN=$apiKey",
+                    "ANTHROPIC_MODEL=${settings.deepseekModel}",
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL=${settings.deepseekOpusModel}",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL=${settings.deepseekSonnetModel}",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL=${settings.deepseekHaikuModel}",
+                    "CLAUDE_CODE_SUBAGENT_MODEL=${settings.deepseekSubagentModel}",
+                    "CLAUDE_CODE_EFFORT_LEVEL=${settings.deepseekEffortLevel}"
+                )
+                .redirectErrorStream(true)
+                .start()
+        } catch (_: Exception) { }
     }
 
     // ---- PasswordSafe ----

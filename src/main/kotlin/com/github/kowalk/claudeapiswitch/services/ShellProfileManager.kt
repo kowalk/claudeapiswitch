@@ -209,6 +209,28 @@ class ShellProfileManager(
         }
     }
 
+    // ---- Current mode detection ----
+
+    /** Returns true if the plugin's export block (DeepSeek active) is present in the profile. */
+    fun hasExportBlock(): Boolean {
+        val profilePath = resolveProfilePath()
+        if (profilePath.isBlank()) return false
+        return try {
+            val file = File(profilePath)
+            if (!file.exists()) return false
+            val content = file.readText()
+            if (isPowerShell(profilePath)) {
+                Regex("""<# claude-api-switch #>[\s\S]*?\${'$'}env:ANTHROPIC_BASE_URL[\s\S]*?<# claude-api-switch-end #>""")
+                    .containsMatchIn(content)
+            } else {
+                Regex("""# claude-api-switch\r?\n[\s\S]*?export ANTHROPIC_BASE_URL=[\s\S]*?# claude-api-switch-end""")
+                    .containsMatchIn(content)
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     // ---- Foreign env var detection ----
 
     fun findForeignClaudeEnvVars(): List<String> {
