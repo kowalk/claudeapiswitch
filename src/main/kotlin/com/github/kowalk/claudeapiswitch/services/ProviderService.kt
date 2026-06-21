@@ -164,6 +164,24 @@ class ProviderService {
         }
     }
 
+    /** Returns well-known shell profile paths that may contain leftover env blocks. */
+    private fun getSiblingProfilePaths(): List<String> {
+        val home = System.getProperty("user.home") ?: return emptyList()
+        val osName = System.getProperty("os.name")?.lowercase(Locale.getDefault()) ?: ""
+
+        return if (osName.contains("windows")) {
+            listOf(
+                "$home\\Documents\\PowerShell\\Microsoft.PowerShell_profile.ps1",
+                "$home\\Documents\\WindowsPowerShell\\Microsoft.PowerShell_profile.ps1"
+            )
+        } else {
+            listOf(
+                "$home/.profile", "$home/.bash_profile",
+                "$home/.bashrc", "$home/.zshrc"
+            )
+        }
+    }
+
     private fun resolveProfilePath(): String {
         val settings = PluginSettings.getInstance().appState
         return settings.profilePath.ifBlank { getDefaultProfilePath() }
@@ -233,15 +251,12 @@ class ProviderService {
         val profilePath = resolveProfilePath()
         if (profilePath.isBlank()) return true
 
-        // Clean the primary profile and any sibling profiles that commonly
-        // contain leftover env vars (e.g. .profile when .bashrc is primary)
+        // Clean the primary profile and any well-known sibling profiles that
+        // may also contain leftover env blocks.
         val pathsToClean = mutableSetOf(profilePath)
-        val home = System.getProperty("user.home") ?: ""
-        if (home.isNotBlank()) {
-            for (sibling in listOf("$home/.profile", "$home/.bash_profile", "$home/.bashrc", "$home/.zshrc")) {
-                if (sibling != profilePath && File(sibling).exists()) {
-                    pathsToClean.add(sibling)
-                }
+        for (sibling in getSiblingProfilePaths()) {
+            if (sibling != profilePath && File(sibling).exists()) {
+                pathsToClean.add(sibling)
             }
         }
 
@@ -438,12 +453,9 @@ class ProviderService {
         if (profilePath.isBlank()) return
 
         val pathsToWrite = mutableSetOf(profilePath)
-        val home = System.getProperty("user.home") ?: ""
-        if (home.isNotBlank()) {
-            for (sibling in listOf("$home/.profile", "$home/.bash_profile", "$home/.bashrc", "$home/.zshrc")) {
-                if (File(sibling).exists()) {
-                    pathsToWrite.add(sibling)
-                }
+        for (sibling in getSiblingProfilePaths()) {
+            if (File(sibling).exists()) {
+                pathsToWrite.add(sibling)
             }
         }
 
